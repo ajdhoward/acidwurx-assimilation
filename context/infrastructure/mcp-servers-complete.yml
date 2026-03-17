@@ -1,0 +1,348 @@
+# 🛠️ ACIDWURX MCP SERVERS - COMPLETE SETUP
+# Model Context Protocol servers for all AI-accessible resources
+
+version: '3.8'
+
+networks:
+  acidwurx-mcp:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+
+volumes:
+  mcp_github_cache:
+  mcp_google_cache:
+  mcp_cloudflare_cache:
+  mcp_stremio_cache:
+  mcp_kubernetes_cache:
+  mcp_terraform_cache:
+  mcp_postgres_data:
+
+services:
+  # ================================================================
+  # CORE INFRASTRUCTURE MCP SERVERS
+  # ================================================================
+
+  # GitHub MCP - Repository access, issues, PRs, actions
+  github-mcp:
+    image: ghcr.io/github/github-mcp-server:latest
+    container_name: github-mcp
+    restart: unless-stopped
+    environment:
+      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_ORG=ajdhoward
+    volumes:
+      - mcp_github_cache:/cache
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Google MCP - Gmail, Drive, Calendar, Tasks
+  google-mcp:
+    image: python:3.11-slim
+    container_name: google-mcp
+    restart: unless-stopped
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_CALENDAR_ID=primary
+    volumes:
+      - mcp_google_cache:/cache
+      - /home/adam/acidwurx/src/mcp/google:/app
+    working_dir: /app
+    command: sh -c "pip install -r requirements.txt && python server.py"
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Cloudflare MCP - Workers, KV, DNS, Tunnels
+  cloudflare-mcp:
+    image: ghcr.io/cloudflare/mcp-server:latest
+    container_name: cloudflare-mcp
+    restart: unless-stopped
+    environment:
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - CLOUDFLARE_ACCOUNT_ID=d9491f1ab703e0a99b69919230410f2a
+      - CLOUDFLARE_ZONE_ID=b4ed8b437fc3004219deb18de61ddc0c
+    volumes:
+      - mcp_cloudflare_cache:/cache
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ================================================================
+  # HOME AUTOMATION MCP SERVERS
+  # ================================================================
+
+  # Home Assistant MCP - All HA entities, automations, services
+  homeassistant-mcp:
+    image: python:3.11-slim
+    container_name: homeassistant-mcp
+    restart: unless-stopped
+    environment:
+      - HA_URL=http://192.168.1.179:8123
+      - HA_TOKEN=${HA_LONG_LIVED_TOKEN}
+    volumes:
+      - /home/adam/acidwurx/src/mcp/homeassistant:/app
+    working_dir: /app
+    command: sh -c "pip install -r requirements.txt && python server.py"
+    networks:
+      - acidwurx-mcp
+    depends_on:
+      - homeassistant
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ADB MCP - Samsung A04s control (Termux, Podman, SSH)
+  adb-mcp:
+    image: python:3.11-slim
+    container_name: adb-mcp
+    restart: unless-stopped
+    environment:
+      - ADB_HOST=192.168.1.186
+      - ADB_PORT=5555
+      - TERMUX_PASSWORD=${TERMUX_PASSWORD}
+    volumes:
+      - /home/adam/acidwurx/src/mcp/adb:/app
+      - /home/adam/.android:/root/.android
+    working_dir: /app
+    command: sh -c "apt-get update && apt-get install -y android-tools-adb && pip install -r requirements.txt && python server.py"
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ================================================================
+  # STREMIO MCP SERVERS
+  # ================================================================
+
+  # Stremio MCP - Addon management, playback control, health monitoring
+  stremio-mcp:
+    image: python:3.11-slim
+    container_name: stremio-mcp
+    restart: unless-stopped
+    environment:
+      - STREMIO_HEALTH_URL=http://192.168.1.164:8082
+      - STREMIO_DASHBOARD_URL=http://192.168.1.164:8083
+      - TORBOX_API_KEY=${TORBOX_API_KEY}
+    volumes:
+      - mcp_stremio_cache:/cache
+      - /home/adam/acidwurx-iac/stremio-addons:/stremio
+    working_dir: /app
+    command: sh -c "pip install -r requirements.txt && python server.py"
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ================================================================
+  # DEVELOPMENT MCP SERVERS
+  # ================================================================
+
+  # Terraform MCP - IaC management, plan, apply
+  terraform-mcp:
+    image: python:3.11-slim
+    container_name: terraform-mcp
+    restart: unless-stopped
+    environment:
+      - TF_VAR_cloudflare_account_id=d9491f1ab703e0a99b69919230410f2a
+      - TF_VAR_cloudflare_zone_id=b4ed8b437fc3004219deb18de61ddc0c
+    volumes:
+      - mcp_terraform_cache:/cache
+      - /home/adam/acidwurx-iac/terraform:/terraform:ro
+      - /home/adam/acidwurx/src/mcp/terraform:/app
+    working_dir: /app
+    command: sh -c "apt-get update && apt-get install -y unzip && curl -o terraform.zip https://releases.hashicorp.com/terraform/1.7.0/terraform_1.7.0_linux_amd64.zip && unzip terraform.zip && mv terraform /usr/local/bin/ && pip install -r requirements.txt && python server.py"
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Docker MCP - Container management, logs, stats
+  docker-mcp:
+    image: python:3.11-slim
+    container_name: docker-mcp
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mcp_kubernetes_cache:/cache
+      - /home/adam/acidwurx/src/mcp/docker:/app
+    working_dir: /app
+    command: sh -c "pip install -r requirements.txt && python server.py"
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Filesystem MCP - Read/write access to project files
+  filesystem-mcp:
+    image: node:18-alpine
+    container_name: filesystem-mcp
+    restart: unless-stopped
+    volumes:
+      - /home/adam/acidwurx-assimilation:/acidwurx-assimilation:ro
+      - /home/adam/acidwurx-coordination:/acidwurx-coordination:ro
+      - /home/adam/acidwurx-iac:/acidwurx-iac:ro
+      - /home/adam/acidwurx:/acidwurx:ro
+    environment:
+      - MCP_FILESYSTEM_ROOT=/home/adam
+    command: npx -y @modelcontextprotocol/server-filesystem
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Git MCP - Git operations, commits, branches, diffs
+  git-mcp:
+    image: node:18-alpine
+    container_name: git-mcp
+    restart: unless-stopped
+    volumes:
+      - /home/adam/acidwurx-assimilation:/acidwurx-assimilation
+      - /home/adam/acidwurx-coordination:/acidwurx-coordination
+      - /home/adam/acidwurx-iac:/acidwurx-iac
+    environment:
+      - GIT_AUTHOR_NAME=AcidWurx AI Builder
+      - GIT_AUTHOR_EMAIL=ai@acidwurx.org
+      - GIT_COMMITTER_NAME=AcidWurx AI Builder
+      - GIT_COMMITTER_EMAIL=ai@acidwurx.org
+    command: npx -y @modelcontextprotocol/server-git
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "3001"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ================================================================
+  # AI/ML MCP SERVERS
+  # ================================================================
+
+  # Qwen MCP - Local Qwen CLI access
+  qwen-mcp:
+    image: node:18-alpine
+    container_name: qwen-mcp
+    restart: unless-stopped
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - QWEN_MODEL=qwen/qwen3-coder:free
+    volumes:
+      - /home/adam/.npm-global:/root/.npm-global
+    command: sh -c "npm install -g @qwenlm/qwen-code && node /app/server.js"
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Gemini MCP - Google AI access
+  gemini-mcp:
+    image: python:3.11-slim
+    container_name: gemini-mcp
+    restart: unless-stopped
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_MODEL=gemini-2.0-flash
+    volumes:
+      - /home/adam/acidwurx/src/mcp/gemini:/app
+    working_dir: /app
+    command: sh -c "pip install -r requirements.txt && python server.py"
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ================================================================
+  # DATA MCP SERVERS
+  # ================================================================
+
+  # Postgres MCP - Database access for AI data
+  postgres-mcp:
+    image: python:3.11-slim
+    container_name: postgres-mcp
+    restart: unless-stopped
+    environment:
+      - POSTGRES_HOST=192.168.1.179
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=acidwurx_ai
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=acidwurx_knowledge
+    volumes:
+      - mcp_postgres_data:/data
+      - /home/adam/acidwurx/src/mcp/postgres:/app
+    working_dir: /app
+    command: sh -c "pip install -r requirements.txt && python server.py"
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Knowledge Base MCP - Search assimilated data
+  knowledge-mcp:
+    image: python:3.11-slim
+    container_name: knowledge-mcp
+    restart: unless-stopped
+    volumes:
+      - /home/adam/acidwurx-assimilation:/knowledge:ro
+      - /home/adam/acidwurx/src/mcp/knowledge:/app
+    working_dir: /app
+    command: sh -c "pip install -r requirements.txt && python server.py"
+    networks:
+      - acidwurx-mcp
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# ================================================================
+# AI BUILDER COORDINATION
+# ================================================================
+# MCP servers are accessible by AI builders via:
+# - Qwen: mcp://server-name/tool-name
+# - Gemini: mcp://server-name/tool-name
+#
+# Example usage in AI prompts:
+# "Use github-mcp to create issues for each task"
+# "Use homeassistant-mcp to pause Stremio when doorbell rings"
+# "Use knowledge-mcp to search assimilated context"
+# ================================================================
